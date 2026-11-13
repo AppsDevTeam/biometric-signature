@@ -24,10 +24,17 @@
 		"adt/doctrine-anonymization": "^0.3 || ^0.4",
 		"phpstan/phpstan": "^2.1",
 		"phpunit/phpunit": "^12.0 || ^13.0",
-		"symfony/cache": "^7.0 || ^8.0"
+		"setasign/fpdf": "^1.8",
+		"setasign/fpdi": "^2.6",
+		"symfony/cache": "^7.0 || ^8.0",
+		"tecnickcom/tcpdf": "^6.7"
 	},
 	"suggest": {
-		"adt/doctrine-anonymization": "Osobní údaje podpisu jsou na entitě označené atributem #[Anonymize] pro anonymizované pohledy - bez balíčku je Doctrine přeskočí"
+		"adt/doctrine-anonymization": "Osobní údaje podpisu jsou na entitě označené atributem #[Anonymize] pro anonymizované pohledy - bez balíčku je Doctrine přeskočí",
+		"ext-gd": "Ořez obrázku podpisu před vložením do PDF (ADT\\BiometricSignature\\Pdf\\SignatureImage)",
+		"setasign/fpdi": "Vložení podpisu do PDF (ADT\\BiometricSignature\\Pdf\\SignatureStamper), spolu se setasign/fpdf nebo tecnickcom/tcpdf",
+		"setasign/fpdf": "Zápis podepsaného PDF pro SignatureStamper (nebo tecnickcom/tcpdf)",
+		"tecnickcom/tcpdf": "Zápis podepsaného PDF pro SignatureStamper (nebo setasign/fpdf)"
 	},
 	"autoload": {
 		"psr-4": {

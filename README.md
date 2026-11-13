@@ -33,6 +33,7 @@ Knihovna obsahuje:
 | `BiometricSigning` | ověřovací kód (generování, limity, pokusy) a dokončení podpisu |
 | `Evidence\Evidence` | důkazní záznam a jeho otisk |
 | `Evidence\EvidenceVerifier` | kontrola, že se podpis od ověření nezměnil |
+| `Pdf\SignatureBox`, `Pdf\SignatureStamper` | místo pro podpis v dokumentu a vložení podpisu do hotového PDF |
 
 Projekt dodá entitu, odeslání SMS, obsah důkazního záznamu a PDF
 (`SigningHandler`) a UI (formulář s podpisem, stránku se zadáním kódu).
@@ -214,6 +215,68 @@ nebo biometrika v DB, upravený důkazní záznam).
 DB i úložiště, může záznam upravit, přepočítat otisky a vygenerovat nové PDF.
 Čas podpisu je čas serveru. Nezávislé potvrzení přinese až elektronická pečeť
 PDF (PAdES) s kvalifikovaným časovým razítkem (RFC 3161), viz Plán.
+
+## Podpis do PDF
+
+Dokument si místo pro podpis označí sám a `SignatureStamper` do něj obrázek
+podpisu vloží. Stránky dokumentu zůstávají, jak jsou - podpis se jen přidá přes
+ně, takže podepsané PDF je dokument, který podepisující viděl.
+
+**Označení místa** je odkaz na adresu `https://signature.invalid/<název>` přes
+plochu, kam má podpis přijít. Název říká, čí podpis na místo patří (`client`,
+`advisor` …); stejně pojmenovaných míst může být víc a podpis přijde do všech.
+Odkaz umí zapsat každý nástroj, kterým PDF vzniká, a doména `.invalid` je
+vyhrazená, takže nikam nevede.
+
+V HTML šabloně (mPDF, Chrome, wkhtmltopdf) stačí místo vypsat tam, kam má podpis
+přijít - název, šířka a výška v mm:
+
+```latte
+<td>Podpis klienta: {\ADT\BiometricSignature\Pdf\SignatureBox::html('client', 45, 15)|noescape}</td>
+```
+
+Je to průhledná plocha: v dokumentu není vidět, jen podpisu drží místo.
+V projektu se vyplatí zaregistrovat ji jako funkci šablon, ať se píše jen
+`{signatureBox('client', 45, 15)}`:
+
+```php
+$template->addFunction('signatureBox', fn (string $name, float $width = 60, float $height = 20)
+	=> new \Latte\Runtime\Html(SignatureBox::html($name, $width, $height)));
+```
+
+V dokumentu z Wordu nebo LibreOffice je místo obrázek (rámeček) s hypertextovým
+odkazem na `https://signature.invalid/client`, v TCPDF a FPDF
+`$pdf->Link($x, $y, $w, $h, SignatureBox::url('client'))`.
+
+**Vložení podpisu:**
+
+```php
+$stamper = new SignatureStamper();
+
+$stamper->findBoxes($pdf);  // list<SignatureBox>: název, stránka, poloha a rozměr
+$signedPdf = $stamper->stamp($pdf, ['client' => $signature->getImageDataUri()]);
+```
+
+Obrázek se před vložením ořízne na samotný tah a vejde do místa se zachovaným
+poměrem stran (`SignatureImage::fit()`), takže podpis je v dokumentu stejně
+velký, ať ho člověk napsal přes celé podpisové pole, nebo jen do jeho části.
+Původní obrázek u podpisu zůstává beze změny - počítá se z něj otisk.
+Když dokument místo některého názvu nemá, nebo PDF nejde přečíst, vyhodí
+`SignatureStampException`.
+
+Potřebuje `setasign/fpdi`, k němu `setasign/fpdf` nebo `tecnickcom/tcpdf`
+(použije se, co projekt má; vynutit jde `new SignatureStamper(SignatureStamper::WRITER_TCPDF)`)
+a rozšíření GD.
+
+Odkazy na web a e-mail v dokumentu zůstávají klikací. Zůstává i označení míst,
+do kterých se teď nepodepisovalo, takže podpis další strany jde doplnit později
+dalším voláním `stamp()`; označení podepsaného místa zmizí.
+
+Omezení: z podepsaného PDF zmizí odkazy uvnitř dokumentu (na jinou stránku)
+a pole formulářů, nejde číst zašifrované PDF ani PDF s komprimovanou strukturou
+(PDF 1.5+ s xref streamem) a odkazy i místa pro podpis na otočených stránkách se
+přeskakují.
+Ověřeno na PDF z mPDF, Chromu, LibreOffice, TCPDF a FPDF.
 
 ## Prohlížeč
 
