@@ -1,0 +1,46 @@
+{
+	"name": "adt/biometric-signature",
+	"description": "Dynamický biometrický podpis na dotykovém zařízení: záznam průběhu psaní, potvrzení kódem a důkazní záznam s otiskem SHA-256",
+	"type": "library",
+	"license": "MIT",
+	"keywords": ["signature", "biometric", "e-signature", "evidence", "doctrine"],
+	"authors": [
+		{
+			"name": "Apps Dev Team",
+			"email": "hello@appsdevteam.com"
+		}
+	],
+	"support": {
+		"email": "hello@appsdevteam.com",
+		"issues": "https://github.com/AppsDevTeam/biometric-signature/issues"
+	},
+	"minimum-stability": "stable",
+	"require": {
+		"php": ">=8.4",
+		"doctrine/orm": "^3.0",
+		"psr/clock": "^1.0"
+	},
+	"require-dev": {
+		"adt/doctrine-anonymization": "^0.3 || ^0.4",
+		"phpstan/phpstan": "^2.1",
+		"phpunit/phpunit": "^12.0 || ^13.0",
+		"symfony/cache": "^7.0 || ^8.0"
+	},
+	"suggest": {
+		"adt/doctrine-anonymization": "Osobní údaje podpisu jsou na entitě označené atributem #[Anonymize] pro anonymizované pohledy - bez balíčku je Doctrine přeskočí"
+	},
+	"autoload": {
+		"psr-4": {
+			"ADT\\BiometricSignature\\": "src/"
+		}
+	},
+	"autoload-dev": {
+		"psr-4": {
+			"ADT\\BiometricSignature\\Tests\\": "tests/"
+		}
+	},
+	"scripts": {
+		"test": "phpunit",
+		"analyse": "phpstan analyse"
+	}
+}
