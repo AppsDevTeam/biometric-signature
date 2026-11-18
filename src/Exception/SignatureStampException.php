@@ -22,6 +22,16 @@ final class SignatureStampException extends \RuntimeException
 		));
 	}
 
+	/** @param list<int> $indexes */
+	public static function boxIndexNotFound(array $indexes, int $count): self
+	{
+		return new self(sprintf(
+			'Dokument nemá místo pro podpis s pořadím %s - označených míst je %d (pořadí od 0, viz SignatureStamper::findBoxes()).',
+			implode(', ', $indexes),
+			$count,
+		));
+	}
+
 	public static function unreadable(\Throwable $previous): self
 	{
 		return new self(
