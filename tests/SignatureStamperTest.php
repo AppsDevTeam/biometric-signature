@@ -134,6 +134,53 @@ final class SignatureStamperTest extends TestCase
 		self::assertSame(2, $this->imageDraws($signed));
 	}
 
+	public function testStampsEachBoxSeparatelyByOrder(): void
+	{
+		$stamper = new SignatureStamper();
+		// tři místa klienta: dvě na první stránce, jedno na druhé
+		$pdf = $this->document([
+			[1, 50, 600, 170, 57, SignatureBox::url('client')],
+			[1, 320, 600, 170, 57, SignatureBox::url('client')],
+			[2, 320, 600, 170, 57, SignatureBox::url('client')],
+		]);
+
+		// první a třetí místo podepsané, druhé zůstane na později
+		$signed = $stamper->stampBoxes($pdf, [0 => $this->signature(), 2 => $this->signature()]);
+
+		self::assertSame(2, $this->pageCount($signed));
+		self::assertSame(2, $this->imageDraws($signed));
+
+		$left = $stamper->findBoxes($signed);
+		self::assertCount(1, $left);
+		self::assertSame(1, $left[0]->page);
+		self::assertEqualsWithDelta(320.0, $left[0]->x, 0.1);
+	}
+
+	public function testStampBoxesKeepsOrdinaryLinksOutOfOrder(): void
+	{
+		// obyčejný odkaz mezi místy se do pořadí míst nepočítá
+		$pdf = $this->document([
+			[1, 50, 600, 170, 57, SignatureBox::url('client')],
+			[1, 50, 100, 200, 20, 'https://example.com/'],
+			[2, 320, 600, 170, 57, SignatureBox::url('advisor')],
+		]);
+
+		$signed = new SignatureStamper()->stampBoxes($pdf, [1 => $this->signature()]);
+
+		self::assertSame(['client'], array_map(fn (SignatureBox $box): string => $box->name, new SignatureStamper()->findBoxes($signed)));
+		self::assertEqualsCanonicalizing([[1, 'https://example.com/', 50.0, 100.0, 200.0, 20.0], [1, 'https://signature.invalid/client', 50.0, 600.0, 170.0, 57.0]], $this->links($signed));
+	}
+
+	public function testStampBoxesRejectsUnknownOrder(): void
+	{
+		$pdf = $this->document([[1, 50, 600, 170, 57, SignatureBox::url('client')]]);
+
+		$this->expectException(SignatureStampException::class);
+		$this->expectExceptionMessageMatches('~pořadím 1\b~');
+
+		new SignatureStamper()->stampBoxes($pdf, [1 => $this->signature()]);
+	}
+
 	/** @param SignatureStamper::WRITER_* $writer */
 	#[DataProvider('writers')]
 	public function testWritesSignedPdf(string $writer): void

@@ -99,6 +99,53 @@ final class SignatureStamper
 			throw SignatureStampException::boxNotFound($missing);
 		}
 
+		return $this->write($pdf, $links, fn (SignatureBox $box): ?string => $signatures[$box->name] ?? null);
+	}
+
+	/**
+	 * Vloží do každého místa jeho vlastní podpis a vrátí podepsané PDF. Na rozdíl od stamp()
+	 * rozlišuje i stejně pojmenovaná místa - podepisující potvrzuje každé zvlášť a může se do
+	 * každého podepsat jinak.
+	 *
+	 * @param array<int, string> $signatures pořadí místa ve findBoxes() (od 0) => obrázek podpisu
+	 *        (data URI, PNG); místa bez podpisu zůstanou prázdná a označená
+	 * @throws SignatureStampException dokument místo s některým pořadím nemá, nebo ho nejde přečíst
+	 */
+	public function stampBoxes(string $pdf, array $signatures): string
+	{
+		$links = $this->findLinks($pdf);
+		$count = 0;
+
+		foreach ($links as $link) {
+			if ($this->createBox($link) !== null) {
+				$count++;
+			}
+		}
+
+		$missing = array_values(array_filter(array_keys($signatures), fn (int $index): bool => $index < 0 || $index >= $count));
+
+		if ($missing) {
+			throw SignatureStampException::boxIndexNotFound($missing, $count);
+		}
+
+		$index = 0;
+
+		// místa se procházejí v pořadí findBoxes() (stránky, na stránce pořadí odkazů)
+		return $this->write($pdf, $links, function () use ($signatures, &$index): ?string {
+			return $signatures[$index++] ?? null;
+		});
+	}
+
+	/**
+	 * Sestaví PDF ze stránek dokumentu a do míst vloží podpisy.
+	 *
+	 * @param list<Link> $links
+	 * @param \Closure(SignatureBox): ?string $signatureFor obrázek podpisu místa, null = místo
+	 *        zůstane označené; volá se pro každé místo jednou, v pořadí findBoxes()
+	 * @throws SignatureStampException
+	 */
+	private function write(string $pdf, array $links, \Closure $signatureFor): string
+	{
 		try {
 			$tcpdf = $this->getWriter() === self::WRITER_TCPDF;
 			$output = $tcpdf ? $this->createTcpdf() : new Fpdi('P', 'pt');
@@ -122,17 +169,18 @@ final class SignatureStamper
 					}
 
 					$box = $this->createBox($link);
+					$signature = $box === null ? null : $signatureFor($box);
 
 					// Stránky se přebírají bez odkazů - obyčejný odkaz i označení místa, do kterého
 					// se teď nepodepisuje, se proto zapíše znovu
-					if ($box === null || !isset($signatures[$box->name])) {
+					if ($box === null || $signature === null) {
 						$output->Link($link['x'], $link['y'], $link['width'], $link['height'], $link['url']);
 
 						continue;
 					}
 
 					// obrázek má poměr stran místa, takže ho vyplní celé a tah zůstane uprostřed
-					$image = SignatureImage::fit($signatures[$box->name], $box->width / $box->height);
+					$image = SignatureImage::fit($signature, $box->width / $box->height);
 
 					if ($tcpdf) {
 						// TCPDF bere obrázek jako data za zavináčem
@@ -144,6 +192,8 @@ final class SignatureStamper
 			}
 
 			return $tcpdf ? $output->Output('', 'S') : $output->Output('S');
+		} catch (SignatureStampException $e) {
+			throw $e;
 		} catch (\Exception $e) {
 			throw SignatureStampException::unreadable($e);
 		}

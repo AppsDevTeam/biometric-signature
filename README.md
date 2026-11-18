@@ -33,7 +33,7 @@ Knihovna obsahuje:
 | `BiometricSigning` | ověřovací kód (generování, limity, pokusy) a dokončení podpisu |
 | `Evidence\Evidence` | důkazní záznam a jeho otisk |
 | `Evidence\EvidenceVerifier` | kontrola, že se podpis od ověření nezměnil |
-| `Pdf\SignatureBox`, `Pdf\SignatureStamper` | místo pro podpis v dokumentu a vložení podpisu do hotového PDF |
+| `Pdf\SignatureBox`, `Pdf\SignatureStamper` | místo pro podpis v dokumentu a vložení podpisu do hotového PDF (podle názvu místa, nebo do každého místa zvlášť) |
 
 Projekt dodá entitu, odeslání SMS, obsah důkazního záznamu a PDF
 (`SigningHandler`) a UI (formulář s podpisem, stránku se zadáním kódu).
@@ -256,6 +256,19 @@ $stamper = new SignatureStamper();
 $stamper->findBoxes($pdf);  // list<SignatureBox>: název, stránka, poloha a rozměr
 $signedPdf = $stamper->stamp($pdf, ['client' => $signature->getImageDataUri()]);
 ```
+
+Když se podepisující potvrzuje do každého místa zvlášť (a do některého se může podepsat
+jinak), vkládá se po jednotlivých místech - klíč je pořadí místa ve `findBoxes()` (od 0):
+
+```php
+$boxes = $stamper->findBoxes($pdf);         // 0: client (str. 1), 1: advisor (str. 1), 2: client (str. 2)
+$signedPdf = $stamper->stampBoxes($pdf, [
+	0 => $first->getImageDataUri(),
+	2 => $second->getImageDataUri(),        // stejně pojmenované místo, jiný podpis
+]);                                         // místo 1 zůstane označené k pozdějšímu podpisu
+```
+
+Pořadí, které dokument nemá, vyhodí `SignatureStampException`.
 
 Obrázek se před vložením ořízne na samotný tah a vejde do místa se zachovaným
 poměrem stran (`SignatureImage::fit()`), takže podpis je v dokumentu stejně
