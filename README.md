@@ -34,6 +34,8 @@ Knihovna obsahuje:
 | `Evidence\Evidence` | důkazní záznam a jeho otisk |
 | `Evidence\EvidenceVerifier` | kontrola, že se podpis od ověření nezměnil |
 | `Pdf\SignatureBox`, `Pdf\SignatureStamper` | místo pro podpis v dokumentu a vložení podpisu do hotového PDF (podle názvu místa, nebo do každého místa zvlášť) |
+| `Pdf\SignatureStamp`, `SignatureId` | ID podpisu a čas pod podpisem v PDF |
+| `UserAgentSummary` | čitelný popis prohlížeče a zařízení pro auditní stopu |
 
 Projekt dodá entitu, odeslání SMS, obsah důkazního záznamu a PDF
 (`SigningHandler`) a UI (formulář s podpisem, stránku se zadáním kódu).
@@ -270,6 +272,29 @@ $signedPdf = $stamper->stampBoxes($pdf, [
 
 Pořadí, které dokument nemá, vyhodí `SignatureStampException`.
 
+**ID a čas pod podpisem.** Místo samotného obrázku jde vložit `SignatureStamp` - pod podpis se
+do téhož místa vypíše ID podpisu a čas, kdy se do něj podepisující podepsal. Je to skutečný text
+PDF (jde vyhledat a zkopírovat) a stejné ID a čas má nést auditní stopa projektu, takže podpis
+v dokumentu jde spárovat se záznamem o tom, kdo, odkud a čím podepisoval:
+
+```php
+use ADT\BiometricSignature\Pdf\SignatureStamp;
+use ADT\BiometricSignature\SignatureId;
+
+$signedPdf = $stamper->stampBoxes($pdf, [
+	0 => new SignatureStamp($first->getImageDataUri(), SignatureId::generate(), $firstSignedAt),
+	2 => new SignatureStamp($second->getImageDataUri(), SignatureId::generate(), $secondSignedAt),
+]);
+```
+
+`SignatureId::generate()` vrací UUID verze 7 (začíná časem vzniku). ID smí být i vlastní -
+tisknutelné ASCII bez mezer, nejvýš 64 znaků. Čas se tiskne v časovém pásmu předaného data
+(`d.m.Y H:i:s`). Písmo popisku se přizpůsobí šířce místa a popisek zabere nejvýš necelou
+polovinu jeho výšky, zbytek patří obrázku. `UserAgentSummary::describe($userAgent)` dá do
+auditní stopy čitelný popis prohlížeče a zařízení („Chrome 158.0.0.0 (Macintosh)“).
+
+ID a čas pod podpisem jsou jen text - neměnnost dokumentu nezaručí (viz Plán, elektronická pečeť).
+
 Obrázek se před vložením ořízne na samotný tah a vejde do místa se zachovaným
 poměrem stran (`SignatureImage::fit()`), takže podpis je v dokumentu stejně
 velký, ať ho člověk napsal přes celé podpisové pole, nebo jen do jeho části.
@@ -340,9 +365,18 @@ Formát bodu je `BIOMETRICS_FIELDS` = `BiometricsNormalizer::FIELDS`
 
 ## Plán
 
-- elektronická pečeť PDF (PAdES) s kvalifikovaným časovým razítkem (RFC 3161)
+- **elektronická pečeť PDF (PAdES)** s kvalifikovaným časovým razítkem (RFC 3161)
   od důvěryhodné autority - čas a neměnnost potvrdí třetí strana a změnu PDF
-  pozná běžný prohlížeč PDF,
+  pozná běžný prohlížeč PDF. Zatím chybí a je potřeba ji dořešit: bez ní jsou ID a čas pod
+  podpisem i auditní stopa jen údaje, které počítá a ukládá aplikace sama. Jak to má vypadat
+  (podle podepsaných dokumentů služby DigiSign): každý vlastnoruční podpis je podpisové pole PDF
+  pojmenované `SIGNATURE_<ID podpisu>` zapečetěné certifikátem provozovatele (CAdES), na konci
+  pečeť celé obálky `ENVELOPE_<ID obálky>`; pečeti se přidávají na konec souboru, takže dřívější
+  zůstávají platné. Potřebuje certifikát pro elektronickou pečeť od kvalifikovaného poskytovatele
+  (PostSignum, I.CA, eIdentity), rozhodnutí o úrovni (pečeť založená na kvalifikovaném
+  certifikátu, nebo kvalifikovaná pečeť s klíčem v certifikovaném zařízení), případně
+  kvalifikovaná časová razítka, bezpečné uložení klíče, hlídání obnovy certifikátu a nástroj,
+  který umí PDF podepisovat přírůstkově (FPDI to neumí),
 - šifrování biometriky veřejným klíčem třetí strany (zvláštní kategorie údajů
   podle čl. 9 GDPR): ani provozovatel aplikace by ji nepřečetl bez držitele klíče.
 

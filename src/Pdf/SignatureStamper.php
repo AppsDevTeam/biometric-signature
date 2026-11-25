@@ -24,7 +24,8 @@ use setasign\Fpdi\PdfReader\PdfReader;
  *
  * Stránky dokumentu zůstávají, jak jsou - podpis se jen přidá přes ně, takže podepsané PDF je
  * dokument, který podepisující viděl. Obrázek se ořízne na tah a vejde do označeného místa
- * (SignatureImage). Potřebuje balíček setasign/fpdi a k němu setasign/fpdf, nebo tecnickcom/tcpdf
+ * (SignatureImage). S podpisem jde vložit i popisek - ID podpisu a čas (SignatureStamp); vejde se
+ * do téhož místa pod obrázek. Potřebuje balíček setasign/fpdi a k němu setasign/fpdf, nebo tecnickcom/tcpdf
  * (některé projekty FPDF mít nemůžou - koliduje jim s jiným balíčkem); použije se ten, který
  * projekt má.
  *
@@ -42,6 +43,14 @@ final class SignatureStamper
 {
 	public const string WRITER_FPDF = 'fpdf';
 	public const string WRITER_TCPDF = 'tcpdf';
+
+	/** Velikost písma popisku pod podpisem v bodech; zmenší se, když se řádek do místa nevejde */
+	private const float CAPTION_FONT_SIZE = 5.0;
+	private const float CAPTION_MIN_FONT_SIZE = 3.0;
+	private const float CAPTION_LINE_HEIGHT = 1.25;
+
+	/** Jak velkou část výšky místa smí popisek zabrat - zbytek patří obrázku podpisu */
+	private const float CAPTION_MAX_SHARE = 0.45;
 
 	/**
 	 * @param self::WRITER_*|null $writer čím se podepsané PDF zapisuje, null = co je nainstalované
@@ -76,8 +85,9 @@ final class SignatureStamper
 	/**
 	 * Vloží podpisy do označených míst a vrátí podepsané PDF.
 	 *
-	 * @param array<string, string> $signatures název místa => obrázek podpisu (data URI, PNG);
-	 *        podpis přijde do všech míst toho názvu, ostatní místa zůstanou prázdná a označená
+	 * @param array<string, string|SignatureStamp> $signatures název místa => obrázek podpisu
+	 *        (data URI, PNG) nebo podpis s popiskem; podpis přijde do všech míst toho názvu,
+	 *        ostatní místa zůstanou prázdná a označená
 	 * @throws SignatureStampException dokument nemá místo některého názvu, nebo ho nejde přečíst
 	 */
 	public function stamp(string $pdf, array $signatures): string
@@ -99,7 +109,7 @@ final class SignatureStamper
 			throw SignatureStampException::boxNotFound($missing);
 		}
 
-		return $this->write($pdf, $links, fn (SignatureBox $box): ?string => $signatures[$box->name] ?? null);
+		return $this->write($pdf, $links, fn (SignatureBox $box): string|SignatureStamp|null => $signatures[$box->name] ?? null);
 	}
 
 	/**
@@ -107,8 +117,9 @@ final class SignatureStamper
 	 * rozlišuje i stejně pojmenovaná místa - podepisující potvrzuje každé zvlášť a může se do
 	 * každého podepsat jinak.
 	 *
-	 * @param array<int, string> $signatures pořadí místa ve findBoxes() (od 0) => obrázek podpisu
-	 *        (data URI, PNG); místa bez podpisu zůstanou prázdná a označená
+	 * @param array<int, string|SignatureStamp> $signatures pořadí místa ve findBoxes() (od 0) =>
+	 *        obrázek podpisu (data URI, PNG) nebo podpis s popiskem (každé místo má vlastní ID
+	 *        a čas); místa bez podpisu zůstanou prázdná a označená
 	 * @throws SignatureStampException dokument místo s některým pořadím nemá, nebo ho nejde přečíst
 	 */
 	public function stampBoxes(string $pdf, array $signatures): string
@@ -131,7 +142,7 @@ final class SignatureStamper
 		$index = 0;
 
 		// místa se procházejí v pořadí findBoxes() (stránky, na stránce pořadí odkazů)
-		return $this->write($pdf, $links, function () use ($signatures, &$index): ?string {
+		return $this->write($pdf, $links, function () use ($signatures, &$index): string|SignatureStamp|null {
 			return $signatures[$index++] ?? null;
 		});
 	}
@@ -140,8 +151,8 @@ final class SignatureStamper
 	 * Sestaví PDF ze stránek dokumentu a do míst vloží podpisy.
 	 *
 	 * @param list<Link> $links
-	 * @param \Closure(SignatureBox): ?string $signatureFor obrázek podpisu místa, null = místo
-	 *        zůstane označené; volá se pro každé místo jednou, v pořadí findBoxes()
+	 * @param \Closure(SignatureBox): (string|SignatureStamp|null) $signatureFor podpis místa,
+	 *        null = místo zůstane označené; volá se pro každé místo jednou, v pořadí findBoxes()
 	 * @throws SignatureStampException
 	 */
 	private function write(string $pdf, array $links, \Closure $signatureFor): string
@@ -179,14 +190,18 @@ final class SignatureStamper
 						continue;
 					}
 
-					// obrázek má poměr stran místa, takže ho vyplní celé a tah zůstane uprostřed
-					$image = SignatureImage::fit($signature, $box->width / $box->height);
+					$stamp = SignatureStamp::of($signature);
+					$captionHeight = $this->writeCaption($output, $box, $stamp->getCaptionLines());
+					$imageHeight = $box->height - $captionHeight;
+
+					// obrázek má poměr stran své části místa, takže ji vyplní celou a tah zůstane uprostřed
+					$image = SignatureImage::fit($stamp->image, $box->width / $imageHeight);
 
 					if ($tcpdf) {
 						// TCPDF bere obrázek jako data za zavináčem
-						$output->Image('@' . self::decode($image), $box->x, $box->y, $box->width, $box->height, 'PNG');
+						$output->Image('@' . self::decode($image), $box->x, $box->y, $box->width, $imageHeight, 'PNG');
 					} else {
-						$output->Image($image, $box->x, $box->y, $box->width, $box->height, 'png');
+						$output->Image($image, $box->x, $box->y, $box->width, $imageHeight, 'png');
 					}
 				}
 			}
@@ -197,6 +212,52 @@ final class SignatureStamper
 		} catch (\Exception $e) {
 			throw SignatureStampException::unreadable($e);
 		}
+	}
+
+	/**
+	 * Napíše popisek do spodní části místa a vrátí výšku, kterou zabral (0 = bez popisku).
+	 *
+	 * Písmo se zmenší, aby se nejdelší řádek vešel na šířku místa a popisek nezabral víc než
+	 * CAPTION_MAX_SHARE jeho výšky; pod CAPTION_MIN_FONT_SIZE se už nezmenšuje (v hodně malém
+	 * místě popisek přesáhne).
+	 *
+	 * @param list<string> $lines
+	 */
+	private function writeCaption(Fpdi|\setasign\Fpdi\Tcpdf\Fpdi $output, SignatureBox $box, array $lines): float
+	{
+		if (!$lines) {
+			return 0.0;
+		}
+
+		$font = $output instanceof Fpdi ? 'Helvetica' : 'helvetica';
+		$size = min(self::CAPTION_FONT_SIZE, $box->height * self::CAPTION_MAX_SHARE / (count($lines) * self::CAPTION_LINE_HEIGHT));
+		$output->SetFont($font, '', $size);
+		$widest = max(array_map(fn (string $line): float => (float) $output->GetStringWidth($line), $lines));
+
+		if ($widest > $box->width) {
+			$size *= $box->width / $widest;
+		}
+
+		$size = max($size, self::CAPTION_MIN_FONT_SIZE);
+		$lineHeight = $size * self::CAPTION_LINE_HEIGHT;
+		$height = count($lines) * $lineHeight;
+		$top = $box->y + $box->height - $height;
+
+		$output->SetFont($font, '', $size);
+		$output->SetTextColor(110, 110, 110);
+
+		foreach ($lines as $index => $line) {
+			if ($output instanceof Fpdi) {
+				// FPDF: y je účaří
+				$output->Text($box->x, $top + $index * $lineHeight + $size * 0.85, $line);
+			} else {
+				// TCPDF: y je horní okraj řádku
+				$output->setCellPaddings(0, 0, 0, 0);
+				$output->Text($box->x, $top + $index * $lineHeight, $line);
+			}
+		}
+
+		return $height;
 	}
 
 	/**
