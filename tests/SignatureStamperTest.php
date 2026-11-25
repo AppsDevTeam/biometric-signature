@@ -6,6 +6,7 @@ namespace ADT\BiometricSignature\Tests;
 
 use ADT\BiometricSignature\Exception\SignatureStampException;
 use ADT\BiometricSignature\Pdf\SignatureBox;
+use ADT\BiometricSignature\Pdf\SignatureStamp;
 use ADT\BiometricSignature\Pdf\SignatureStamper;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -198,6 +199,66 @@ final class SignatureStamperTest extends TestCase
 		self::assertStringNotContainsString('/Subtype /Link', $signed);
 	}
 
+	/** @param SignatureStamper::WRITER_* $writer */
+	#[DataProvider('writers')]
+	public function testStampsIdAndTimeUnderSignature(string $writer): void
+	{
+		if ($writer === SignatureStamper::WRITER_TCPDF && !class_exists(\TCPDF::class)) {
+			self::markTestSkipped('Chybí tecnickcom/tcpdf.');
+		}
+
+		$pdf = $this->document([
+			[1, 60, 600, 170, 57, SignatureBox::url('client')],
+			[2, 320, 600, 170, 57, SignatureBox::url('client')],
+		]);
+
+		$signed = new SignatureStamper($writer)->stampBoxes($pdf, [
+			0 => new SignatureStamp($this->signature(), '01a20e63-4833-7259-a560-54be1ffa1689', new \DateTimeImmutable('2026-11-24 17:28:37', new \DateTimeZone('Europe/Prague'))),
+			1 => new SignatureStamp($this->signature(), '01a20e63-58e8-72de-991c-20213975409b', new \DateTimeImmutable('2026-11-24 17:28:41', new \DateTimeZone('Europe/Prague'))),
+		]);
+
+		// popisek je text dokumentu (jde vyhledat), každé místo má své ID a čas
+		$text = $this->pageText($signed);
+		self::assertStringContainsString('ID: 01a20e63-4833-7259-a560-54be1ffa1689', $text);
+		self::assertStringContainsString('24.11.2026 17:28:37', $text);
+		self::assertStringContainsString('ID: 01a20e63-58e8-72de-991c-20213975409b', $text);
+		self::assertStringContainsString('24.11.2026 17:28:41', $text);
+
+		self::assertSame(2, $this->imageDraws($signed));
+		self::assertSame([], new SignatureStamper()->findBoxes($signed));
+	}
+
+	public function testCaptionLeavesMostOfTheBoxToSignature(): void
+	{
+		$pdf = $this->document([[1, 60, 600, 170, 57, SignatureBox::url('client')]]);
+		$stamp = new SignatureStamp($this->signature(), '01a20e63-4833-7259-a560-54be1ffa1689', new \DateTimeImmutable('2026-11-24 17:28:37'));
+
+		$signed = new SignatureStamper(SignatureStamper::WRITER_FPDF)->stamp($pdf, ['client' => $stamp]);
+
+		// obrázek zabírá horní část místa (šířka 170, výška bez dvou řádků popisku), popisek je pod ním
+		self::assertMatchesRegularExpression('~q 170\.00 0 0 (4[0-9]\.\d\d) 60\.00 [\d.]+ cm /I1 Do Q~', $this->pageContent($signed));
+	}
+
+	public function testPlainImageIsStampedWithoutCaption(): void
+	{
+		$pdf = $this->document([[1, 60, 600, 170, 57, SignatureBox::url('client')]]);
+
+		$signed = new SignatureStamper(SignatureStamper::WRITER_FPDF)->stamp($pdf, ['client' => $this->signature()]);
+
+		self::assertStringNotContainsString('ID:', $this->pageText($signed));
+		// bez popisku patří obrázku celé místo
+		self::assertStringContainsString('q 170.00 0 0 57.00 60.00', $this->pageContent($signed));
+	}
+
+	public function testStampRejectsIdThatCannotBePrinted(): void
+	{
+		self::assertSame(['ID: abc-123'], new SignatureStamp('data:,', 'abc-123')->getCaptionLines());
+		self::assertSame([], new SignatureStamp('data:,')->getCaptionLines());
+
+		$this->expectException(\InvalidArgumentException::class);
+		new SignatureStamp('data:,', 'Tomáš Kudělka');
+	}
+
 	/** @return iterable<string, array{SignatureStamper::WRITER_*}> */
 	public static function writers(): iterable
 	{
@@ -320,7 +381,29 @@ final class SignatureStamperTest extends TestCase
 		return new Fpdi()->setSourceFile(StreamReader::createByString($pdf));
 	}
 
-	/** Kolikrát se v obsahu stránek kreslí obrázek (operátor Do nad obrázkem I1) */
+	/** Rozbalený obsah všech proudů PDF (stránky i převzaté šablony stránek) */
+	private function pageContent(string $pdf): string
+	{
+		preg_match_all('~stream\r?\n(.*?)\r?\nendstream~s', $pdf, $matches);
+		$content = '';
+
+		foreach ($matches[1] as $stream) {
+			$unpacked = @gzuncompress($stream);
+			$content .= ($unpacked === false ? $stream : $unpacked) . "\n";
+		}
+
+		return $content;
+	}
+
+	/** Text, který stránky vypisují operátory Tj a TJ */
+	private function pageText(string $pdf): string
+	{
+		preg_match_all('~\(((?:[^()\\\\]|\\\\.)*)\)\s*\]?\s*T[jJ]~s', $this->pageContent($pdf), $matches);
+
+		return implode("\n", array_map(fn (string $text): string => str_replace("\0", '', stripcslashes($text)), $matches[1]));
+	}
+
+	/** Kolikrát se v obsahu stránek kreslí obrázek (operátor Do nad obrázkem I1, I2…) */
 	private function imageDraws(string $pdf): int
 	{
 		preg_match_all('~stream\r?\n(.*?)\r?\nendstream~s', $pdf, $matches);
@@ -328,7 +411,7 @@ final class SignatureStamperTest extends TestCase
 
 		foreach ($matches[1] as $stream) {
 			$content = @gzuncompress($stream);
-			$draws += substr_count($content === false ? $stream : $content, '/I1 Do');
+			$draws += (int) preg_match_all('~/I\d+ Do~', $content === false ? $stream : $content);
 		}
 
 		return $draws;
